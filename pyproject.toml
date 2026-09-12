@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-mix-studio"
+version = "0.1.0"
+description = "Local-first desktop AI-assisted music mixing application"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "soundfile>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+ai-mix-studio = "ai_mix_studio.app:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
