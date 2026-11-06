@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from ai_mix_studio.analyzer import analyze_audio
 from ai_mix_studio.audio import load_audio
+from ai_mix_studio.session import analyze_session
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
@@ -42,8 +43,9 @@ PAGE = """<!doctype html>
 <body>
 <h1>🎛️ Mix Studio — Online Mixing Analyzer</h1>
 <p class="sub">Local DSP measurements only (no AI): dBTP · RMS · LUFS/LRA · stereo · correlation · masking</p>
+<p style="color:#9aa0a8">Select one stem for track analysis, or many stems (25–50, all starting at 0:00) for full session analysis: bus mix + masking conflicts.</p>
 <form id="f" enctype="multipart/form-data">
-  <input type="file" name="file" accept=".wav,.flac,.aiff,.aif" required>
+  <input type="file" name="file" accept=".wav,.flac,.aiff,.aif" multiple required>
   <button type="submit">Analyze</button>
 </form>
 <div id="out">Upload a stem to see its measurements…</div>
@@ -53,9 +55,22 @@ document.getElementById('f').onsubmit = async (e) => {
   const out = document.getElementById('out');
   out.textContent = 'Analyzing…';
   const fd = new FormData(e.target);
-  const r = await fetch('/analyze', { method: 'POST', body: fd });
+  const multi = e.target.file.files.length > 1;
+  if (multi) { fd.delete('file'); [...e.target.file.files].forEach(f => fd.append('files', f)); }
+  const r = await fetch(multi ? '/analyze-session' : '/analyze', { method: 'POST', body: fd });
   const j = await r.json();
   if (!r.ok) { out.textContent = 'Error: ' + (j.error || r.statusText); return; }
+  if (j.track_count) {
+    let h = `<h2>SESSION — ${j.track_count} stems, ${j.duration_seconds.toFixed(1)} s</h2><table>`;
+    if (j.bus) h += `<tr><td>BUS true peak</td><td>${j.bus.true_peak_dbtp.toFixed(2)} dBTP</td></tr><tr><td>BUS LUFS int</td><td>${j.bus.lufs_integrated.toFixed(2)}</td></tr><tr><td>BUS correlation</td><td>${j.bus.stereo_correlation.toFixed(3)}</td></tr>`;
+    h += '</table><h2>PER-STEM</h2><table>';
+    for (const [n, t] of Object.entries(j.tracks))
+      h += `<tr><td>${n}</td><td>peak ${t.peak_dbfs.toFixed(1)} · dBTP ${t.true_peak_dbtp.toFixed(1)} · LUFS ${t.lufs_integrated.toFixed(1)} · corr ${t.stereo_correlation.toFixed(2)}</td></tr>`;
+    h += '</table><h2>MASKING CONFLICTS (top 50)</h2><table>';
+    for (const c of j.conflicts)
+      h += `<tr><td>${c.track_a} vs ${c.track_b}</td><td>${c.center_hz.toFixed(0)} Hz · ${c.level_a_db.toFixed(1)} / ${c.level_b_db.toFixed(1)} dB</td></tr>`;
+    out.innerHTML = h + '</table>'; return;
+  }
   let h = `<h2>LEVEL / DYNAMICS</h2><table>
     <tr><td>Duration</td><td>${j.duration_seconds.toFixed(2)} s · ${j.sample_rate} Hz · ${j.channels} ch</td></tr>
     <tr><td>Peak</td><td>${j.peak_dbfs.toFixed(2)} dBFS</td></tr>
@@ -115,6 +130,48 @@ def analyze():
         stereo_width_db=result.stereo_width_db,
         spectral_centroid_hz=result.spectral_centroid_hz,
         masking_bands=[asdict(b) for b in result.masking_bands],
+    )
+
+
+@app.post("/analyze-session")
+def analyze_session_route():
+    files = request.files.getlist("files")
+    if not files or not any(f.filename for f in files):
+        return jsonify(error="no files uploaded"), 400
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td:
+        stems = []
+        for f in files:
+            if not f.filename:
+                continue
+            dest = Path(td) / Path(f.filename).name
+            f.save(dest)
+            stems.append((dest.stem, dest))
+        try:
+            report = analyze_session(stems)
+        except Exception as exc:
+            return jsonify(error=str(exc)), 400
+    return jsonify(
+        sample_rate=report.sample_rate,
+        duration_seconds=report.duration_seconds,
+        track_count=report.track_count,
+        summary=report.summary_lines(),
+        bus=None if report.bus is None else {
+            "peak_dbfs": report.bus.peak_dbfs,
+            "true_peak_dbtp": report.bus.true_peak_dbtp,
+            "rms_dbfs": report.bus.rms_dbfs,
+            "lufs_integrated": report.bus.lufs_integrated,
+            "lra": report.bus.lra,
+            "stereo_correlation": report.bus.stereo_correlation,
+        },
+        tracks={name: {
+            "peak_dbfs": r.peak_dbfs,
+            "true_peak_dbtp": r.true_peak_dbtp,
+            "rms_dbfs": r.rms_dbfs,
+            "lufs_integrated": r.lufs_integrated,
+            "stereo_correlation": r.stereo_correlation,
+        } for name, r in report.tracks.items()},
+        conflicts=[asdict(c) for c in report.conflicts[:50]],
     )
 
 
