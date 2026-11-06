@@ -24,17 +24,16 @@ from PySide6.QtWidgets import (
 
 from .analyzer import analyze_audio
 from .audio import load_audio
-from .mix_advisor import recommend
 from .models import Project, Track
 
 
 class MixStudioWindow(QMainWindow):
-    """Professional UI foundation; audio/DSP engines are kept modular for later expansion."""
+    """Local-first mixing workstation UI; analysis engine provides measurements only (no AI)."""
 
     def __init__(self) -> None:
         super().__init__()
         self.project = Project()
-        self.setWindowTitle("AI Mix Studio — Professional")
+        self.setWindowTitle("Mix Studio — Analysis & Metering")
         self.resize(1440, 900)
         self.setMinimumSize(1100, 700)
         self._build_menu()
@@ -57,7 +56,6 @@ class MixStudioWindow(QMainWindow):
 
         self.menuBar().addMenu("Track")
         self.menuBar().addMenu("Mix")
-        self.menuBar().addMenu("AI")
         self.menuBar().addMenu("View")
         self.menuBar().addMenu("Help")
 
@@ -120,29 +118,28 @@ class MixStudioWindow(QMainWindow):
         timeline_layout.addWidget(timeline_info, 1)
         mixer_panel, mixer_layout = self._panel("MIXER")
         mixer_layout.addWidget(QLabel("Master   ┃  Peak ─────────  LUFS ─────────  Stereo Correlation ─────"))
-        mixer_layout.addWidget(QLabel("[AI Mix Engine]   [EQ]   [Comp]   [Saturation]   [FX]   [Fader]   [Pan]"))
+        mixer_layout.addWidget(QLabel("[EQ]   [Comp]   [Saturation]   [FX]   [Fader]   [Pan]"))
         center_layout.addWidget(timeline_panel, 3)
         center_layout.addWidget(mixer_panel, 1)
         main_split.addWidget(center)
 
-        ai_panel, ai_layout = self._panel("AI MIX ASSISTANT")
-        self.ai_label = QLabel(
+        meter_panel, meter_layout = self._panel("ANALYSIS / METERS")
+        self.meter_label = QLabel(
             "Import stems, then select a track.\n\n"
-            "The professional engine will provide:\n"
-            "• masking / frequency conflict detection\n"
-            "• level and dynamics suggestions\n"
-            "• stereo / phase analysis\n"
-            "• bus and routing recommendations\n"
-            "• reference-track matching\n\n"
-            "Every AI action will be previewable, reversible and explainable."
+            "Deterministic local measurements for the mixing engineer:\n"
+            "• peak (dBFS) and true peak (dBTP)\n"
+            "• RMS, crest factor, dynamics\n"
+            "• LUFS integrated / momentary, LRA (ITU-R BS.1770)\n"
+            "• stereo width, mid/side levels, phase correlation\n"
+            "• octave-band masking / spectral overlap, spectral centroid"
         )
-        self.ai_label.setWordWrap(True)
-        self.ai_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        ai_layout.addWidget(self.ai_label, 1)
+        self.meter_label.setWordWrap(True)
+        self.meter_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        meter_layout.addWidget(self.meter_label, 1)
         analyze_btn = QPushButton("Analyze Selected Track")
         analyze_btn.clicked.connect(self.analyze_selected)
-        ai_layout.addWidget(analyze_btn)
-        main_split.addWidget(ai_panel)
+        meter_layout.addWidget(analyze_btn)
+        main_split.addWidget(meter_panel)
 
         main_split.setSizes([250, 850, 340])
         self.setCentralWidget(root)
@@ -170,26 +167,43 @@ class MixStudioWindow(QMainWindow):
     def analyze_selected(self) -> None:
         row = self.track_list.currentRow()
         if row < 0 or row >= len(self.project.tracks):
-            QMessageBox.information(self, "AI Mix Studio", "Select a track first.")
+            QMessageBox.information(self, "Mix Studio", "Select a track first.")
             return
         track = self.project.tracks[row]
         try:
             result = analyze_audio(load_audio(track.source))
-            advice = recommend(result)
         except Exception as exc:
             QMessageBox.critical(self, "Analysis failed", str(exc))
             return
         lines = [
             f"{track.name}",
-            f"Duration: {result.duration_seconds:.2f} s",
-            f"Peak: {result.peak_dbfs:.2f} dBFS",
-            f"RMS: {result.rms_dbfs:.2f} dBFS",
-            f"Crest: {result.crest_factor_db:.2f} dB",
+            f"Duration: {result.duration_seconds:.2f} s   {result.sample_rate} Hz   {result.channels} ch",
             "",
-            "RECOMMENDATIONS",
+            "LEVEL / DYNAMICS",
+            f"Peak:        {result.peak_dbfs:.2f} dBFS",
+            f"True peak:   {result.true_peak_dbtp:.2f} dBTP",
+            f"RMS:         {result.rms_dbfs:.2f} dBFS",
+            f"Crest:       {result.crest_factor_db:.2f} dB",
+            "",
+            "LOUDNESS (BS.1770)",
+            f"LUFS int:    {result.lufs_integrated:.2f} LUFS",
+            f"LUFS max:    {result.lufs_momentary_max:.2f} LUFS",
+            f"LRA:         {result.lra:.2f} LU",
+            "",
+            "STEREO",
+            f"Correlation: {result.stereo_correlation:+.3f}",
+            f"Mid RMS:     {result.mid_rms_dbfs:.2f} dBFS",
+            f"Side RMS:    {result.side_rms_dbfs:.2f} dBFS",
+            f"Width:       {result.stereo_width_db:.2f} dB",
+            "",
+            "MASKING / SPECTRUM",
+            f"Spectral centroid: {result.spectral_centroid_hz:.0f} Hz",
         ]
-        lines.extend(f"[{item.priority.upper()}] {item.title}\n{item.detail}\n" for item in advice)
-        self.ai_label.setText("\n".join(lines))
+        for band in result.masking_bands:
+            lines.append(
+                f"  {band.center_hz:7.0f} Hz  L {band.left_db:7.1f}  R {band.right_db:7.1f}  overlap {band.overlap:.2f}"
+            )
+        self.meter_label.setText("\n".join(lines))
         self.statusBar().showMessage(f"Analysis complete: {track.name}")
 
 
