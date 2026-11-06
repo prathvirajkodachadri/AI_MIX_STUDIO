@@ -1,13 +1,17 @@
 # AI Mix Studio
 
-A local-first desktop music production and AI-assisted mixing application.
+A local-first desktop music production and mixing application with a deterministic measurement engine for mixing engineers. **No AI/ML components** — all analysis is classic DSP (numpy/scipy).
 
 ## Goals
 
 - Import and organize audio stems
 - Play and arrange tracks on a timeline
-- Analyze levels, dynamics, frequency balance, loudness, and stereo image locally
-- Provide explainable AI mixing recommendations
+- Analyze audio locally and show measurements that help a mixing engineer:
+  - Sample peak (dBFS) and true peak (dBTP, 4x oversampled)
+  - RMS level and crest factor (dynamics)
+  - LUFS integrated / momentary and LRA loudness (ITU-R BS.1770-4 K-weighted, gated)
+  - Stereo: mid/side RMS, stereo width, L/R phase correlation
+  - Masking: octave-band L/R spectral overlap, spectral centroid
 - Apply non-destructive mix decisions through a mixer/control surface
 - Compare source and processed audio
 - Export WAV/MP3 and analysis reports
@@ -16,12 +20,11 @@ A local-first desktop music production and AI-assisted mixing application.
 ## Architecture
 
 ```text
-AI Mix Studio Desktop UI
+Mix Studio Desktop UI
         |
         +-- Project / Session Layer
         +-- Audio Engine
-        +-- Analysis Engine
-        +-- Mix Recommendation Engine
+        +-- Analysis / Metering Engine   (peak, dBTP, RMS, LUFS, LRA, stereo, correlation, masking)
         +-- DSP / Processing Graph
         +-- Export / Reporting
         +-- Plugin Host (future VST3)
@@ -29,6 +32,6 @@ AI Mix Studio Desktop UI
 
 ## Development status
 
-Phase 1 establishes the application shell, project model, audio-engine abstraction, analyzer interfaces, and a clean path for future DSP and AI capabilities.
+Phase 1 establishes the application shell, project model, audio-engine abstraction, and the measurement/analyzer engine. Timeline arrangement, DSP processing and export follow next.
 
 This repository is intentionally independent of `AI_MIX_ANALYZER`.
