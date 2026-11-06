@@ -79,16 +79,15 @@ def _band_energies(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     seg = 65536
     window = np.hanning(seg)
     acc = None
-    count = 0
+    used = seg
     for start in range(0, n - seg + 1, seg // 2):
         spec = np.abs(np.fft.rfft(mono[start : start + seg] * window)) ** 2
         acc = spec if acc is None else acc + spec
-        count += 1
     if acc is None:
-        spec = np.abs(np.fft.rfft(mono * np.hanning(n))) ** 2
-        acc, count = spec, 1
-    acc /= count
-    freqs = np.fft.rfftfreq(seg if count > 1 else n, 1.0 / sample_rate)
+        used = n
+        acc = np.abs(np.fft.rfft(mono * np.hanning(n))) ** 2
+    acc /= max(1, (n - seg) // (seg // 2) + 1) if used == seg else 1
+    freqs = np.fft.rfftfreq(used, 1.0 / sample_rate)
     edges = [f for f in BAND_EDGES if f < sample_rate / 2]
     out = []
     for lo, hi in zip(edges[:-1], edges[1:]):
