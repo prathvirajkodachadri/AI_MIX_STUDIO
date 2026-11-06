@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mix Studio — Online Mixing Analyzer</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", sans-serif; background:#15171a; color:#e7e9ec; margin:0; }
+  header { background:#111316; padding:10px 18px; display:flex; align-items:center; gap:14px; border-bottom:1px solid #30343a; }
+  header h1 { font-size:17px; margin:0; }
+  header span { color:#9aa0a8; font-size:12px; }
+  #toolbar { background:#111316; padding:8px 18px; display:flex; gap:8px; align-items:center; border-bottom:1px solid #30343a; }
+  #toolbar button { background:#292d33; border:1px solid #3a3f46; color:#e7e9ec; padding:7px 12px; border-radius:4px; cursor:pointer; }
+  #toolbar button:hover { background:#353a42; }
+  #toolbar .info { color:#9aa0a8; font-size:12px; margin-left:auto; }
+  main { display:flex; gap:8px; padding:8px; height:calc(100vh - 96px); }
+  .panel { background:#1d2024; border:1px solid #30343a; border-radius:5px; padding:10px; overflow:auto; }
+  .panel h2 { font-size:11px; letter-spacing:1px; margin:0 0 8px; color:#e7e9ec; }
+  #tracksPanel { width:240px; display:flex; flex-direction:column; }
+  #trackList { flex:1; overflow:auto; background:#17191d; border:1px solid #30343a; border-radius:4px; }
+  #trackList div { padding:8px; border-bottom:1px solid #22262b; cursor:pointer; font-size:13px; }
+  #trackList div.sel { background:#343a43; }
+  #center { flex:1; display:flex; flex-direction:column; gap:8px; min-width:0; }
+  #timeline { flex:3; }
+  #mixer { flex:1; color:#9aa0a8; font-size:12px; }
+  #analysisPanel { width:380px; }
+  #out { font-size:12.5px; white-space:pre-wrap; font-variant-numeric:tabular-nums; line-height:1.5; }
+  #out h3 { font-size:11px; color:#7ea4f5; letter-spacing:1px; margin:14px 0 2px; }
+  input[type=file] { color:#9aa0a8; font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>🎛️ Mix Studio</h1><span>Online Mixing Analyzer — 100% client-side DSP, no AI, nothing leaves your browser</span></header>
+<div id="toolbar">
+  <button id="importBtn">＋ Import Stems</button>
+  <input type="file" id="fileInput" accept=".wav,.flac,.aiff,.aif,.mp3" multiple style="display:none">
+  <button id="analyzeBtn">Analyze Selected</button>
+  <button id="sessionBtn">Analyze Session (all stems)</button>
+  <span class="info">48 kHz · WAV/FLAC/AIFF · single stem = track meters · multiple = bus + masking conflicts</span>
+</div>
+<main>
+  <div class="panel" id="tracksPanel"><h2>TRACKS</h2><div id="trackList"><div style="color:#9aa0a8;cursor:default">No stems imported yet</div></div></div>
+  <div id="center">
+    <div class="panel" id="timeline"><h2>ARRANGEMENT / TIMELINE</h2><div style="color:#9aa0a8;font-size:12px">All stems start at 0:00:00.000 and run full length (up to 15:00). Waveform lanes appear here after import.</div><div id="lanes"></div></div>
+    <div class="panel" id="mixer"><h2>MIXER</h2>Master ┃ Peak ────── LUFS ────── Stereo Correlation ────── &nbsp; [EQ] [Comp] [Saturation] [FX] [Fader] [Pan]</div>
+  </div>
+  <div class="panel" id="analysisPanel"><h2>ANALYSIS / METERS</h2><div id="out">Import stems, then analyze a track or the whole session.
+
+Measurements: peak dBFS · true peak dBTP · RMS · crest factor · LUFS int/max · LRA (ITU-R BS.1770) · stereo correlation · mid/side · width · spectral centroid · octave-band masking.</div></div>
+</main>
+<script>
+"use strict";
+const tracks = []; // {name, left, right, sr, duration}
+let sel = -1;
+const out = document.getElementById("out");
+
+document.getElementById("importBtn").onclick = () => document.getElementById("fileInput").click();
+document.getElementById("fileInput").onchange = async (e) => {
+  const ctx = new AudioContext({ sampleRate: 48000 });
+  for (const f of e.target.files) {
+    try {
+      const buf = await ctx.decodeAudioData(await f.arrayBuffer());
+      const n = buf.length, ch = buf.channelData;
+      tracks.push({ name: f.name.replace(/\.[^.]+$/, ""), left: ch[0] ? Float32Array.from(ch[0]) : null,
+        right: ch.length > 1 ? Float32Array.from(ch[1]) : (ch[0] ? Float32Array.from(ch[0]) : null),
+        sr: buf.sampleRate, duration: buf.duration });
+    } catch (err) { out.textContent = "Could not decode " + f.name + ": " + err.message; }
+  }
+  ctx.close();
+  renderList();
+  e.target.value = "";
+};
+function renderList() {
+  const el = document.getElementById("trackList");
+  el.innerHTML = tracks.length ? "" : '<div style="color:#9aa0a8;cursor:default">No stems imported yet</div>';
+  tracks.forEach((t, i) => {
+    const d = document.createElement("div");
+    d.textContent = t.name + "  (" + t.duration.toFixed(1) + " s)";
+    if (i === sel) d.className = "sel";
+    d.onclick = () => { sel = i; renderList(); };
+    el.appendChild(d);
+  });
+  document.getElementById("lanes").innerHTML = tracks.map(t =>
+    `<div style="margin:4px 0;padding:4px 8px;background:#17191d;border:1px solid #30343a;border-radius:3px;font-size:12px">▰ ${t.name} — 0:00:00 → ${fmt(t.duration)}</div>`).join("");
+}
+function fmt(s) { const m = Math.floor(s/60), ss = (s%60).toFixed(1); return m + ":" + ss.padStart(4,"0"); }
+
+const dbfs = v => v <= 0 ? -120 : Math.max(-120, 20*Math.log10(v));
+
+// --- ITU-R BS.1770 K-weighting biquads (48 kHz) ---
+function biquad(b, a, x) {
+  const y = new Float64Array(x.length);
+  let x1=0,x2=0,y1=0,y2=0;
+  for (let i=0;i<x.length;i++){ const xn=x[i];
+    const yn = b[0]*xn + b[1]*x1 + b[2]*x2 - a[1]*y1 - a[2]*y2;
+    x2=x1; x1=xn; y2=y1; y1=yn; y[i]=yn; }
+  return y;
+}
+const K1 = { b:[1.53512485958697,-2.69169618940638,1.19839281085285], a:[1,-1.69065929318241,0.73248077421585] };
+const K2 = { b:[1,-2,1], a:[1,-1.99004745483398,0.99007225036621] };
+function kWeight(x){ return biquad(K2.b, K2.a, biquad(K1.b, K1.a, x)); }
+function blockLUFS(x, ch) {
+  const k = ch === 1 ? kWeight(x) : null;
+  let total = 0;
+  if (ch === 1) { let s=0; for (let i=0;i<k.length;i++) s+=k[i]*k[i]; total = s/k.length; }
+  else { const kl=kWeight(x[0]), kr=kWeight(x[1]);
+    let sl=0,sr2=0; for (let i=0;i<kl.length;i++){ sl+=kl[i]*kl[i]; sr2+=kr[i]*kr[i]; }
+    total = (sl+sr2)/kl.length; }
+  return total <= 0 ? -120 : -0.691 + 10*Math.log10(total);
+}
+function loudness(chData) {
+  const sr = 48000, block = 0.4*sr|0, hop = 0.1*sr|0;
+  const n = chData[0].length;
+  if (n < block) { const l = blockLUFS(chData.length===1?chData[0]:chData, chData.length); return {i:l, m:l, lra:0}; }
+  const mom = [], st = [];
+  for (let s=0; s+block<=n; s+=hop) {
+    const bl = chData.map(c => c.slice(s, s+block));
+    const l = blockLUFS(bl.length===1?bl[0]:bl, bl.length);
+    mom.push(l); if (l > -70) st.push(l);
+  }
+  if (!st.length) return {i:-120, m:Math.max(...mom), lra:0};
+  const rel = -0.691 + 10*Math.log10(st.reduce((a,l)=>a+Math.pow(10,l/10),0)/st.length) - 10;
+  const g = st.filter(l => l >= rel).sort((a,b)=>a-b);
+  const integ = g.length ? -0.691 + 10*Math.log10(g.reduce((a,l)=>a+Math.pow(10,l/10),0)/g.length) : -120;
+  const lra = g.length ? g[Math.floor(0.95*(g.length-1))] - g[Math.floor(0.10*(g.length-1))] : 0;
+  return { i: integ, m: Math.max(...mom), lra };
+}
+function truePeak(mono) {
+  let tp = 0;
+  for (let i=0;i<mono.length-1;i++) {
+    for (let k=1;k<4;k++) { const v = Math.abs(mono[i] + (mono[i+1]-mono[i])*k/4); if (v>tp) tp=v; }
+  }
+  return dbfs(tp);
+}
+const BANDS = [20,40,80,160,315,630,1250,2500,5000,10000,20000];
+function bandEnergies(mono, sr) {
+  // Goertzel energy per octave band over the full signal
+  const n = mono.length;
+  const edges = BANDS.filter(f => f < sr/2);
+  const step = Math.max(1, Math.floor(n/8192));
+  const out = [];
+  for (let b=0;b<edges.length-1;b++) {
+    const k0 = Math.max(1, Math.floor(edges[b]*n/sr)), k1 = Math.min(Math.ceil(edges[b+1]*n/sr), Math.floor(n/2));
+    let e = 0;
+    for (let k=k0;k<=k1;k++) {
+      const w0 = 2*Math.PI*k/n, c = 2*Math.cos(w0);
+      let s1=0, s2=0;
+      for (let i=0;i<n;i+=step) { const s0 = mono[i] + c*s1 - s2; s2=s1; s1=s0; }
+      e += s1*s1 + s2*s2 - c*s1*s2;
+    }
+    out.push(e * step / n);
+  }
+  return out;
+}
+function analyzeTrack(t) {
+  const L = t.left, R = t.right, mono = new Float64Array(L.length);
+  let peak=0, sum=0;
+  for (let i=0;i<L.length;i++){ mono[i]=(L[i]+R[i])/2; const a=Math.abs(mono[i]); if(a>peak)peak=a; sum+=mono[i]*mono[i]; }
+  const rms = Math.sqrt(sum/L.length);
+  const mid = new Float64Array(L.length), side = new Float64Array(L.length);
+  let ms=0, ss=0, sx=0, sy=0, sxx=0, syy=0;
+  for (let i=0;i<L.length;i++){ mid[i]=(L[i]+R[i])/2; side[i]=(L[i]-R[i])/2; ms+=mid[i]*mid[i]; ss+=side[i]*side[i];
+    sx+=L[i]; sy+=R[i]; sxx+=L[i]*L[i]; syy+=R[i]*R[i]; }
+  const n=L.length;
+  let sxy=0; for (let i=0;i<n;i++) sxy+=L[i]*R[i];
+  const corr = (n*sxx - sx*sx) > 0 && (n*syy - sy*sy) > 0
+    ? (n*sxy - sx*sy) / Math.sqrt((n*sxx-sx*sx)*(n*syy-sy*sy)) : 1;
+  const lu = loudness(L.length===R.length && L!==R ? [L,R] : [L]);
+  // spectral centroid
+  const seg = Math.min(65536, n), spec = new Float64Array(seg/2+1);
+  // cheap centroid via Goertzel over log-spaced bins
+  let num=0, den=0;
+  for (let k=1;k<seg/2;k+=8) { const f=k*48000/seg; const w0=2*Math.PI*k/n, c=2*Math.cos(w0); let s0=0,s1=0,s2=0;
+    for (let i=0;i<n;i+=Math.max(1,n>>12|0)) { s0=mono[i]+c*s1-s2; s2=s1; s1=s0; } const e=Math.abs(s1*s1+s2*s2-c*s1*s2); num+=f*e; den+=e; }
+  return { peak: dbfs(peak), tp: truePeak(mono), rms: dbfs(rms), crest: peak>0&&rms>0?20*Math.log10(peak/rms):0,
+    lufs: lu.i, lufsm: lu.m, lra: lu.lra, corr, mid: dbfs(Math.sqrt(ms/n)), side: dbfs(Math.sqrt(ss/n)),
+    width: ms>0&&ss>0 ? 20*Math.log10(Math.sqrt(ss/n)/Math.sqrt(ms/n)) : -120,
+    centroid: den>0? num/den : 0, bands: bandEnergies(mono, 48000), dur: t.duration, name: t.name };
+}
+function renderTrack(r) {
+  out.innerHTML =
+    `<b>${r.name}</b> — ${r.dur.toFixed(2)} s<br><br>
+     <h3>LEVEL / DYNAMICS</h3>
+     Peak ${r.peak.toFixed(2)} dBFS · True peak ${r.tp.toFixed(2)} dBTP<br>
+     RMS ${r.rms.toFixed(2)} dBFS · Crest ${r.crest.toFixed(2)} dB<br><br>
+     <h3>LOUDNESS (BS.1770)</h3>
+     LUFS int ${r.lufs.toFixed(2)} · max ${r.lufsm.toFixed(2)} · LRA ${r.lra.toFixed(2)} LU<br><br>
+     <h3>STEREO</h3>
+     Correlation ${r.corr.toFixed(3)} · Mid ${r.mid.toFixed(2)} · Side ${r.side.toFixed(2)} · Width ${r.width.toFixed(2)} dB<br><br>
+     <h3>MASKING / SPECTRUM</h3>
+     Spectral centroid ${r.centroid.toFixed(0)} Hz`;
+}
+document.getElementById("analyzeBtn").onclick = () => {
+  if (sel < 0 || !tracks[sel]) { out.textContent = "Select a track first."; return; }
+  renderTrack(analyzeTrack(tracks[sel]));
+};
+document.getElementById("sessionBtn").onclick = () => {
+  if (!tracks.length) { out.textContent = "Import stems first."; return; }
+  const rs = tracks.map(analyzeTrack);
+  // bus sum
+  const n = Math.max(...tracks.map(t => t.left.length));
+  const busL = new Float64Array(n), busR = new Float64Array(n);
+  tracks.forEach(t => { for (let i=0;i<t.left.length;i++){ busL[i]+=t.left[i]; busR[i]+=t.right[i]; } });
+  const bus = analyzeTrack({ name:"BUS (sum)", left:busL, right:busR, duration:n/48000 });
+  // conflicts from band energies
+  const conflicts = [];
+  const centers = BANDS.slice(0,-1).map((f,i)=>Math.sqrt(f*BANDS[i+1]));
+  for (let a=0;a<rs.length;a++) for (let b=a+1;b<rs.length;b++) {
+    const ea = rs[a].bands, eb = rs[b].bands, m = Math.min(ea.length, eb.length);
+    const refA = Math.max(...ea), refB = Math.max(...eb);
+    for (let k=0;k<m;k++) {
+      if (ea[k]<=0||eb[k]<=0) continue;
+      const la = dbfs(Math.sqrt(ea[k])), lb = dbfs(Math.sqrt(eb[k]));
+      if (la < dbfs(Math.sqrt(refA))-30 || lb < dbfs(Math.sqrt(refB))-30) continue;
+      conflicts.push({ a:rs[a].name, b:rs[b].name, hz:centers[k], la, lb, sev:Math.min(la,lb) });
+    }
+  }
+  conflicts.sort((x,y)=>y.sev-x.sev);
+  let h = `<b>SESSION — ${rs.length} stems, ${bus.dur.toFixed(1)} s @ 48 kHz</b><br><br>
+    <h3>BUS (sum of all stems)</h3>
+    Peak ${bus.peak.toFixed(2)} dBFS · True peak ${bus.tp.toFixed(2)} dBTP · RMS ${bus.rms.toFixed(2)} dBFS<br>
+    LUFS int ${bus.lufs.toFixed(2)} · LRA ${bus.lra.toFixed(2)} · Correlation ${bus.corr.toFixed(3)}<br>`;
+  if (bus.tp > -1) h += `<span style="color:#ff8a80">⚠ bus true peak above −1 dBTP — gain staging needed.</span><br>`;
+  if (bus.corr < 0) h += `<span style="color:#ff8a80">⚠ bus correlation below 0 — check for out-of-phase stems.</span><br>`;
+  h += `<br><h3>PER-STEM</h3>` + rs.map(r =>
+    `${r.name}: peak ${r.peak.toFixed(1)} · dBTP ${r.tp.toFixed(1)} · LUFS ${r.lufs.toFixed(1)} · corr ${r.corr.toFixed(2)}<br>`).join("");
+  h += `<br><h3>MASKING CONFLICTS (top 50 of ${conflicts.length})</h3>` + (conflicts.slice(0,50).map(c =>
+    `${c.a} vs ${c.b} @ ${c.hz.toFixed(0)} Hz (${c.la.toFixed(1)} / ${c.lb.toFixed(1)} dB)<br>`).join("") || "none");
+  out.innerHTML = h;
+};
+</script>
+</body>
+</html>
