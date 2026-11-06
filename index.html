@@ -61,9 +61,11 @@ document.getElementById("fileInput").onchange = async (e) => {
   for (const f of e.target.files) {
     try {
       const buf = await ctx.decodeAudioData(await f.arrayBuffer());
-      const n = buf.length, ch = buf.channelData;
-      tracks.push({ name: f.name.replace(/\.[^.]+$/, ""), left: ch[0] ? Float32Array.from(ch[0]) : null,
-        right: ch.length > 1 ? Float32Array.from(ch[1]) : (ch[0] ? Float32Array.from(ch[0]) : null),
+      const ch = buf.channelData;
+      if (!ch || ch.length === 0 || !ch[0] || buf.length === 0) throw new Error("file has no decodable audio channels");
+      const left = Float32Array.from(ch[0]);
+      const right = ch.length > 1 ? Float32Array.from(ch[1]) : left;
+      tracks.push({ name: f.name.replace(/\.[^.]+$/, ""), left, right,
         sr: buf.sampleRate, duration: buf.duration });
     } catch (err) { out.textContent = "Could not decode " + f.name + ": " + err.message; }
   }
