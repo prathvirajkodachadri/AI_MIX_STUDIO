@@ -30,3 +30,10 @@ def load_audio(path: Path) -> AudioBuffer:
         raise FileNotFoundError(path)
     samples, sample_rate = sf.read(path, always_2d=False, dtype="float32")
     return AudioBuffer(samples=samples, sample_rate=sample_rate)
+
+
+def probe_sample_rate(path: Path) -> int:
+    """Sample rate of a file without decoding it (cheap header read)."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+    return int(sf.info(path).samplerate)
