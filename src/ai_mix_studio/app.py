@@ -149,15 +149,21 @@ class MixStudioWindow(QMainWindow):
             self,
             "Import audio stems",
             "",
-            "Audio (*.wav *.flac *.aiff *.aif);;All files (*.*)",
+            "Audio (*.wav *.flac *.aiff *.aif *.mp3 *.ogg);;All files (*.*)",
         )
         if not paths:
             return
+        first_new = len(self.project.tracks)
         for raw in paths:
             path = Path(raw)
             track = Track(name=path.stem, source=path)
             self.project.add_track(track)
             self.track_list.addItem(track.name)
+        # Select the first imported stem so "Analyze Selected Track"
+        # works immediately (previously nothing was selected and the
+        # button just popped a "select a track" dialog).
+        if self.track_list.currentRow() < 0:
+            self.track_list.setCurrentRow(first_new)
         self.statusBar().showMessage(f"Imported {len(paths)} stem(s)")
 
     def _track_selected(self, row: int) -> None:
@@ -170,11 +176,19 @@ class MixStudioWindow(QMainWindow):
             QMessageBox.information(self, "Mix Studio", "Select a track first.")
             return
         track = self.project.tracks[row]
+        # Analysis of a full-length stem takes a moment; show progress and
+        # a busy cursor instead of appearing frozen with no feedback.
+        self.statusBar().showMessage(f"Analyzing {track.name}…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         try:
             result = analyze_audio(load_audio(track.source))
         except Exception as exc:
             QMessageBox.critical(self, "Analysis failed", str(exc))
+            self.statusBar().showMessage(f"Analysis failed: {track.name}")
             return
+        finally:
+            QApplication.restoreOverrideCursor()
         lines = [
             f"{track.name}",
             f"Duration: {result.duration_seconds:.2f} s   {result.sample_rate} Hz   {result.channels} ch",

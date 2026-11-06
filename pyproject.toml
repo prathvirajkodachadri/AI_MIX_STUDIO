@@ -19,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
+web = [
+    "Flask>=3.0",
+]
 
 [project.scripts]
 ai-mix-studio = "ai_mix_studio.app:main"

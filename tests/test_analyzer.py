@@ -60,3 +60,39 @@ def test_anti_phase_stereo(tmp_path: Path) -> None:
 
     assert result.stereo_correlation == pytest.approx(-1.0, abs=1e-6)
     assert result.side_rms_dbfs > result.mid_rms_dbfs
+    # Peak / true peak are per-channel: an anti-phase pair is not silence
+    # (the mono sum cancels, but each channel still peaks at -6.02 dBFS).
+    assert result.peak_dbfs == pytest.approx(-6.02, abs=0.1)
+    assert result.true_peak_dbtp >= -6.2
+
+
+def test_mono_spectrum_and_bands(tmp_path: Path) -> None:
+    # Mono tracks used to get no masking bands and a 0 Hz centroid, so a
+    # mono stem (vocal, bass, ...) looked un-analyzed in every UI.
+    path = tmp_path / "mono_tone.wav"
+    _write_tone(path, freq=440.0, stereo=False)
+
+    result = analyze_audio(load_audio(path))
+
+    assert result.channels == 1
+    assert len(result.masking_bands) > 0
+    assert result.spectral_centroid_hz == pytest.approx(440.0, rel=0.1)
+    loudest = max(result.masking_bands, key=lambda b: b.left_db)
+    assert loudest.center_hz == pytest.approx(445.0, rel=0.05)
+    # Band level is a true RMS in dBFS: a 0.5-amplitude sine reads ~-9 dB.
+    assert loudest.left_db == pytest.approx(-9.03, abs=1.5)
+
+
+def test_long_file_chunked_paths(tmp_path: Path) -> None:
+    # 5 s crosses the true-peak chunk size and exercises the segmented
+    # (Welch) spectrum path used for full-length stems.
+    path = tmp_path / "long.wav"
+    _write_tone(path, freq=440.0, seconds=5.0, stereo=True)
+
+    result = analyze_audio(load_audio(path))
+
+    assert result.duration_seconds == 5.0
+    assert result.peak_dbfs == pytest.approx(-6.02, abs=0.1)
+    assert result.true_peak_dbtp >= result.peak_dbfs - 0.1
+    assert result.spectral_centroid_hz == pytest.approx(440.0, rel=0.1)
+    assert -14.0 < result.lufs_integrated < -6.0

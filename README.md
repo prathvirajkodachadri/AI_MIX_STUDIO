@@ -35,3 +35,22 @@ Mix Studio Desktop UI
 Phase 1 establishes the application shell, project model, audio-engine abstraction, and the measurement/analyzer engine. Timeline arrangement, DSP processing and export follow next.
 
 This repository is intentionally independent of `AI_MIX_ANALYZER`.
+
+## Running an analyzer
+
+All three front-ends share the same measurements (peak/dBTP, RMS, LUFS/LRA, stereo, masking) and accept WAV/FLAC/AIFF/MP3/OGG, mono or stereo, full-length stems:
+
+```bash
+pip install -r requirements.txt   # includes Flask for the web analyzer
+```
+
+- **Browser (no server):** open `index.html` — import stems, select a track, *Analyze Selected*, or *Analyze Session* for bus + masking. Everything runs client-side.
+- **Web server:** `python web_analyzer.py` → http://localhost:8000 (one file = track analysis; many files = session analysis).
+- **Desktop:** `python main.py`.
+
+## Tests
+
+```bash
+python -m pytest tests/ -q          # engine + session tests
+node --test tests/test_browser_dsp.mjs   # browser (index.html) DSP tests
+```
